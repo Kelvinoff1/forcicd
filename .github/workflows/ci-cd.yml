@@ -1,0 +1,114 @@
+# Назва нашого пайплайну
+name: CI/CD Pipeline for Python App
+
+# Тригери для запуску: push або pull request до будь-якої гілки
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+# Змінна середовища, доступна в усіх job'ах
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # --- JOB 1: ТЕСТУВАННЯ ---
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Отримуємо код з репозиторію
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 2. Налаштовуємо Python
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # 3. Кешуємо залежності для прискорення
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip # Стандартний шлях для кешу pip
+          key: pip-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+
+      # 4. Встановлюємо залежності
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # 5. Запускаємо тести з pytest
+      - name: Run tests
+        run: pytest
+
+  # --- JOB 2: ЗБІРКА ПРОЕКТУ ---
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [test] # Ця job почнеться тільки після успішного завершення 'test'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Встановлюємо Python та залежності, аналогічно до job 'test'
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Створюємо архів з файлами додатку, виключаючи непотрібні папки
+      - name: Create production package
+        run: zip -r app-bundle.zip . -x ".git/*" ".github/*" "venv/*" "__pycache__/*"
+
+      # Зберігаємо архів як артефакт
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-build
+          path: app-bundle.zip
+
+  # --- JOB 3: ДЕПЛОЙ ---
+  # Цей крок залишається майже без змін, бо він не залежить від мови програмування
+  deploy:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: staging
+      url: https://your-staging-url.com
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-build
+          path: ./deploy-package
+
+      - name: Simulate deployment
+        env:
+          DEPLOY_TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+        run: |
+          echo "🚀 Starting deployment to ${{ github.environment }}..."
+          echo "Unpacking artifact..."
+          unzip ./deploy-package/app-bundle.zip -d ./final-app
+          echo "Contents of the deployed app:"
+          ls -la ./final-app
+          echo "✅ Deployment simulation complete."
+
